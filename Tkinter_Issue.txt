@@ -1,0 +1,80 @@
+The Tkinter FocusOut trap
+
+A short explanation of why an inline editor created over a Treeview cell
+can vanish instantly — and how to avoid it.
+
+THE SYMPTOM
+
+You double-click a cell. An inline Entry widget is created and placed over
+the cell. It disappears immediately — faster than the eye can follow.
+No error, no output. As far as the user is concerned, the double-click
+did nothing.
+
+THE CAUSE
+
+The editor was created with this pattern:
+
+    entry = ttk.Entry(parent)
+    entry.place(x=x, y=y, width=w, height=h)
+    entry.focus_set()
+    entry.bind("<FocusOut>", commit)
+
+What happens next, in the Tkinter event loop:
+
+  1. The entry is placed on screen.
+
+  2. focus_set() asks the window manager to move focus to the entry.
+     This is asynchronous — it does not happen immediately.
+
+  3. The Treeview that was double-clicked still holds keyboard focus
+     at this instant.
+
+  4. Tkinter sees a widget (the new entry) that does not currently have
+     focus, and fires <FocusOut> on it.
+
+  5. The <FocusOut> handler runs, calls commit(), and destroys the entry.
+
+So the editor is born and killed in the same tick. The user sees nothing.
+
+THE DESIGN GAP
+
+Tkinter fires <FocusOut> on a widget that never actually had focus.
+This is counter-intuitive but is how Tk behaves. Any code that relies on
+<FocusOut> to commit will break whenever the entry is placed on top of a
+widget that already holds focus.
+
+WHY focus_set() DOES NOT HELP
+
+focus_set() is a request. It respects the current focus owner. If another
+widget (here: the Treeview) currently has focus, the request may be
+deferred or ignored until the next event. In the interim, <FocusOut> on
+the new entry fires — before focus was ever granted.
+
+THE FIX
+
+Two changes:
+
+  1. Use focus_force() instead of focus_set(). focus_force() takes focus
+     regardless of the current owner.
+
+  2. Do not bind <FocusOut> at all. Commit on <Return>, cancel on <Escape>.
+
+    entry = ttk.Entry(parent)
+    entry.place(x=x, y=y, width=w, height=h)
+    entry.focus_force()
+    entry.select_range(0, "end")
+
+    entry.bind("<Return>", commit)
+    entry.bind("<KP_Enter>", commit)
+    entry.bind("<Escape>", cancel)
+
+With this pattern, nothing closes the entry until the user presses Enter
+or Esc. It does not matter who had focus before.
+
+SUMMARY
+
+  - Symptom: an inline editor appears and disappears instantly.
+  - Cause: <FocusOut> fires on an entry that never received focus.
+  - Root: focus_set() is a polite request, not an immediate action;
+    Tkinter's <FocusOut> fires anyway.
+  - Fix: use focus_force() and drop the <FocusOut> binding.
