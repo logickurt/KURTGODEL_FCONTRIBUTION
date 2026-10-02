@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The Tkinter FocusOut trap — a short note</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 780px; margin: 40px auto; line-height: 1.55; color: #222; }
+  h1 { font-size: 1.6em; border-bottom: 1px solid #ccc; padding-bottom: 6px; }
+  h2 { font-size: 1.15em; margin-top: 1.6em; }
+  code, pre { font-family: Consolas, Menlo, monospace; font-size: 0.92em; }
+  pre { background: #f4f4f4; padding: 10px 14px; border-left: 3px solid #999; overflow-x: auto; }
+  .note { background: #fdf6e3; border-left: 3px solid #d0a000; padding: 10px 14px; margin: 16px 0; }
+  .fix { background: #eef7ee; border-left: 3px solid #4a8a4a; padding: 10px 14px; margin: 16px 0; }
+</style>
+</head>
+<body>
+
+<h1>The Tkinter <code>FocusOut</code> trap</h1>
+
+<p>A short explanation of why an inline editor created over a <code>Treeview</code> cell can vanish instantly — and how to avoid it.</p>
+
+<h2>The symptom</h2>
+
+<p>You double-click a cell. An inline <code>Entry</code> widget is created and placed over the cell. It disappears immediately — faster than the eye can follow. No error, no output. As far as the user is concerned, the double-click did nothing.</p>
+
+<h2>The cause</h2>
+
+<p>The editor was created with this pattern:</p>
+
+<pre>entry = ttk.Entry(parent)
+entry.place(x=x, y=y, width=w, height=h)
+entry.focus_set()                       # polite request for focus
+entry.bind("&lt;FocusOut&gt;", commit)       # close the entry when it loses focus</pre>
+
+<p>What happens next, in the Tkinter event loop:</p>
+
+<ol>
+  <li>The entry is placed on screen.</li>
+  <li><code>focus_set()</code> asks the window manager to move focus to the entry. This is <strong>asynchronous</strong> — it does not happen immediately.</li>
+  <li>The Treeview that was double-clicked <strong>still holds keyboard focus</strong> at this instant.</li>
+  <li>Tkinter sees a widget (the new entry) that does not currently have focus, and fires <code>&lt;FocusOut&gt;</code> on it.</li>
+  <li>The <code>&lt;FocusOut&gt;</code> handler runs, calls <code>commit()</code>, and destroys the entry.</li>
+</ol>
+
+<p>So the editor is born and killed in the same tick. The user sees nothing.</p>
+
+<div class="note">
+<strong>The design gap.</strong> Tkinter fires <code>&lt;FocusOut&gt;</code> on a widget that <em>never actually had</em> focus. This is counter-intuitive but is how Tk behaves. Any code that relies on <code>&lt;FocusOut&gt;</code> to commit will break whenever the entry is placed on top of a widget that already holds focus.
+</div>
+
+<h2>Why <code>focus_set()</code> doesn't help</h2>
+
+<p><code>focus_set()</code> is a request. It respects the current focus owner. If another widget (here: the Treeview) currently has focus, the request may be deferred or ignored until the next event. In the interim, <code>&lt;FocusOut&gt;</code> on the new entry fires — before focus was ever granted.</p>
+
+<h2>The fix</h2>
+
+<div class="fix">
+<strong>Two changes:</strong>
+<ol>
+  <li>Use <code>focus_force()</code> instead of <code>focus_set()</code>. <code>focus_force()</code> takes focus regardless of the current owner.</li>
+  <li>Do not bind <code>&lt;FocusOut&gt;</code> at all. Commit on <code>&lt;Return&gt;</code>, cancel on <code>&lt;Escape&gt;</code>.</li>
+</ol>
+</div>
+
+<pre>entry = ttk.Entry(parent)
+entry.place(x=x, y=y, width=w, height=h)
+entry.focus_force()
+entry.select_range(0, "end")
+
+entry.bind("&lt;Return&gt;", commit)
+entry.bind("&lt;KP_Enter&gt;", commit)
+entry.bind("&lt;Escape&gt;", cancel)</pre>
+
+<p>With this pattern, nothing closes the entry until the user presses Enter or Esc. It does not matter who had focus before.</p>
+
+<h2>Summary</h2>
+
+<ul>
+  <li><strong>Symptom:</strong> an inline editor appears and disappears instantly.</li>
+  <li><strong>Cause:</strong> <code>&lt;FocusOut&gt;</code> fires on an entry that never received focus.</li>
+  <li><strong>Root:</strong> <code>focus_set()</code> is a polite request, not an immediate action; Tkinter's <code>&lt;FocusOut&gt;</code> fires anyway.</li>
+  <li><strong>Fix:</strong> use <code>focus_force()</code> and drop the <code>&lt;FocusOut&gt;</code> binding.</li>
+</ul>
+
+</body>
+</html>
